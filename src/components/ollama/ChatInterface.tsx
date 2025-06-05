@@ -1,17 +1,20 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useOllamaStore } from "@/hooks/useOllamaStore";
+import { useRagStore } from "@/hooks/useRagStore";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Send, Bot, User, RefreshCw } from "lucide-react";
+import { Send, Bot, User, RefreshCw, FileText } from "lucide-react";
 import { useOllamaApi } from "@/hooks/useOllamaApi";
 import { toast } from "sonner";
 
 export const ChatInterface = () => {
   const [message, setMessage] = useState("");
+  const [useRag, setUseRag] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { currentChat, createNewChat, settings, models } = useOllamaStore();
+  const { documents, searchSimilarChunks } = useRagStore();
   const { sendMessage, fetchModels, isConnected } = useOllamaApi();
 
   const scrollToBottom = () => {
@@ -37,10 +40,24 @@ export const ChatInterface = () => {
     }
 
     const userMessage = message.trim();
+    let finalMessage = userMessage;
+
+    // Use RAG if enabled and documents are available
+    if (useRag && documents.length > 0) {
+      const relevantChunks = searchSimilarChunks(userMessage, 3);
+      
+      if (relevantChunks.length > 0) {
+        const context = relevantChunks.map(chunk => chunk.content).join('\n\n');
+        finalMessage = `Context from documents:\n${context}\n\nQuestion: ${userMessage}\n\nPlease answer based on the provided context.`;
+        
+        console.log('Using RAG context:', { query: userMessage, chunks: relevantChunks.length });
+      }
+    }
+
     setMessage("");
 
     try {
-      await sendMessage(chatId, userMessage);
+      await sendMessage(chatId, finalMessage);
     } catch (error) {
       toast.error("Failed to send message. Check your Ollama connection.");
     }
@@ -67,7 +84,7 @@ export const ChatInterface = () => {
 
   return (
     <div className="flex-1 flex flex-col">
-      {/* Model Selection */}
+      {/* Model Selection & RAG Toggle */}
       <div className="bg-black/10 backdrop-blur-sm border-b border-white/10 p-4">
         <div className="flex items-center gap-4">
           <Select value={settings.selectedModel} onValueChange={(value) => useOllamaStore.getState().updateSettings({ selectedModel: value })}>
@@ -92,6 +109,21 @@ export const ChatInterface = () => {
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh Models
           </Button>
+
+          {documents.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useRag}
+                  onChange={(e) => setUseRag(e.target.checked)}
+                  className="rounded"
+                />
+                <FileText className="w-4 h-4" />
+                Use Documents ({documents.length})
+              </label>
+            </div>
+          )}
 
           {!isConnected && (
             <div className="text-red-400 text-sm">
@@ -134,6 +166,11 @@ export const ChatInterface = () => {
             <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
             <h3 className="text-lg font-semibold mb-2">Start a conversation</h3>
             <p>Send a message to begin chatting with {settings.selectedModel || 'your model'}</p>
+            {documents.length > 0 && useRag && (
+              <p className="text-sm mt-2 text-blue-400">
+                RAG is enabled - your messages will be enhanced with document context
+              </p>
+            )}
           </div>
         )}
 
@@ -147,7 +184,7 @@ export const ChatInterface = () => {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Type your message..."
+            placeholder={useRag && documents.length > 0 ? "Ask about your documents..." : "Type your message..."}
             className="flex-1 bg-white/10 border-white/20 text-white placeholder:text-gray-400 resize-none"
             rows={1}
           />
